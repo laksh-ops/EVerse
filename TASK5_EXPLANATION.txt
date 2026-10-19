@@ -1,0 +1,150 @@
+================================================================================
+SONIC SIGNATURES: FROM AUDIO SIGNALS TO SONG RECOGNITION
+GROUP 2 - TASK 5: SIMPLE SPECTRAL MATCHING (BASELINE RECOGNISER)
+COMPLETE EXPLANATION, MATHEMATICAL FORMULATION & ARCHITECTURE GUIDE
+================================================================================
+
+1. TASK OVERVIEW & CORE DELIVERABLE
+--------------------------------------------------------------------------------
+Detailed Task:
+Build a baseline song recogniser using average spectral features and a similarity
+measure to compare an unknown query clip with the three reference songs.
+
+Expected Deliverable:
+A working baseline that returns the most similar song and its similarity score.
+
+
+2. ARCHITECTURAL CONNECTION TO TASK 1 & TASK 2
+--------------------------------------------------------------------------------
+Task 5 does not exist in isolation; it directly builds upon the foundations laid
+in Task 1 and Task 2:
+
+- Task 1 (Audio Loading & Waveform Analysis):
+  * Standardized sampling rate: target_sr = 22,050 Hz.
+  * Multi-channel to mono conversion via librosa.to_mono().
+  * Peak amplitude normalization: y / max(|y|).
+  * Why this matters for Task 5: Standardization ensures that both the query clip
+    and the reference songs have identical frequency bin spacings and consistent
+    dynamic ranges, preventing sampling discrepancies.
+
+- Task 2 (Spectrogram and Window-Size Study):
+  * STFT parameters: n_fft = 2048 (SAMPLE_COUNT), hop_length = 512 (HOP_LENGTH).
+  * 75% overlap provides an optimal balance:
+    - Frequency resolution: delta_f = 22050 / 2048 ~= 10.77 Hz per bin.
+    - Time resolution: delta_t = 512 / 22050 ~= 23.2 ms per frame.
+  * Decibel conversion: librosa.amplitude_to_db(..., ref=np.max) maps magnitude
+    to a logarithmic dB scale where 0 dB represents the loudest peak.
+  * Why this matters for Task 5: Decibel spectrograms align with human auditory
+    perception (Weber-Fechner Law), ensuring prominent musical notes and quiet
+    harmonics are both proportionately represented.
+
+
+3. WHAT ARE AVERAGE SPECTRAL FEATURES?
+--------------------------------------------------------------------------------
+A Short-Time Fourier Transform (STFT) produces a 2D time-frequency matrix:
+    S(f, t) of dimensions: (Number of Frequency Bins) x (Number of Time Frames)
+
+Problem:
+A reference song is typically 2 to 4 minutes long (thousands of time frames),
+while a query clip is only 5 to 10 seconds long (hundreds of time frames).
+Because their lengths differ and the query's start time in the song is unknown,
+we cannot directly compute a frame-by-frame matrix difference.
+
+Solution:
+We collapse the time dimension by computing the time-average of the decibel
+magnitude across all time frames:
+    S_mean(f) = (1 / T) * sum_{t=1}^{T} S(f, t)
+
+Optionally, to capture frequency dynamics and variance across the clip, we can
+also compute the standard deviation across time frames:
+    S_std(f) = sqrt( (1 / T) * sum_{t=1}^{T} (S(f, t) - S_mean(f))^2 )
+
+Feature Vector:
+We restrict frequencies to the musically active spectrum (0 Hz to 5000 Hz) to
+eliminate inaudible high-frequency noise. The resulting 1D vector S_mean(f) acts
+as a static "spectral footprint" or timbral summary of the audio track.
+
+
+4. SIMILARITY MEASURES & MATHEMATICAL FORMULATIONS
+--------------------------------------------------------------------------------
+Let u be the 1D feature vector of the query clip.
+Let v be the 1D feature vector of a candidate song in the database.
+
+A. Cosine Similarity (Primary & Recommended Metric):
+   Formula:
+       Cosine(u, v) = (u . v) / ( ||u||_2 * ||v||_2 )
+                    = sum_i (u_i * v_i) / ( sqrt(sum_i u_i^2) * sqrt(sum_i v_i^2) )
+
+   Why it is preferred for audio:
+   - Cosine similarity measures the angle between the two vectors in high-dimensional
+     frequency space.
+   - It is strictly scale/volume invariant: if the query clip is recorded at a lower
+     or higher volume, the vector is simply multiplied by a scalar c > 0 (c * u).
+     Because the norm in the denominator scales proportionally, Cosine(c * u, v) = Cosine(u, v).
+   - Values range from -1.0 to +1.0 (with +1.0 meaning identical spectral profile).
+
+B. Pearson Correlation Coefficient:
+   Formula:
+       r(u, v) = sum_i ( (u_i - mean(u)) * (v_i - mean(v)) ) /
+                 ( sqrt(sum_i (u_i - mean(u))^2) * sqrt(sum_i (v_i - mean(v))^2) )
+
+   - Mean-centers both feature vectors before computing cosine similarity.
+   - Evaluates whether spectral peaks and valleys rise and fall together across
+     the frequency bands.
+
+C. Normalized Euclidean Similarity:
+   Formula:
+       Dist(u, v) = ||u - v||_2 = sqrt( sum_i (u_i - v_i)^2 )
+       Sim_euc(u, v) = 1 / ( 1 + Dist(u, v) )
+
+   - Measures absolute point-to-point geometric distance.
+   - More sensitive to overall energy level shifts than Cosine similarity.
+
+
+5. RECOGNITION DECISION RULE
+--------------------------------------------------------------------------------
+1. Extract query feature vector: u = extract_average_spectral_features(query_audio)
+2. For each song S_k in the database (k = 1, 2, 3):
+       score_k = compute_similarity(u, v_k)
+3. Prediction:
+       Best Song = argmax_{S_k} (score_k)
+       Best Score = max (score_k)
+
+
+6. ADVANCED REFINEMENT: SLIDING-WINDOW (CHUNKED) MATCHING
+--------------------------------------------------------------------------------
+Limitation of Global Averaging:
+A full song changes over time (intro, verse, chorus, bridge, outro). Averaging
+the entire 3-minute song dilutes distinctive section-specific frequency content.
+
+Sliding-Window Solution:
+- Instead of comparing the query against the full song's average, divide the
+  reference song into sliding chunks matching the query duration (e.g., 10 seconds).
+- Compute the similarity between the query and each chunk across the entire song.
+- The candidate song's score is taken as the maximum similarity across all chunks:
+      Score(Song_k) = max_{chunk in Song_k} Cosine(u_query, chunk_feature)
+- The chunk with the highest score also yields an accurate estimate of the query's
+  starting timestamp in the song!
+
+
+7. WHY SIMPLE SPECTRAL MATCHING WORKS (AND WHY SHAZAM USES TASK 6)
+--------------------------------------------------------------------------------
+Comparison Table:
+
+| Criterion              | Simple Spectral Matching (Task 5)     | Peak-Pair Hashing (Task 6 / Shazam)       |
+|------------------------|---------------------------------------|-------------------------------------------|
+| Temporal Order         | Lost (averaging removes all timing)   | Preserved (pairs relative time delta_t)   |
+| Scrambled Audio Notes  | Cannot distinguish scrambled audio    | Rejects scrambled audio immediately       |
+| Noise Robustness       | Low (noise shifts the spectral mean)  | High (noise adds isolated random peaks)   |
+| Database Scalability   | O(N) linear search over dense vectors | O(1) inverted hash table lookup           |
+| Computational Cost     | Minimal (single STFT + vector dot)    | Moderate (peak finding + hash indexing)   |
+| Best Use Case          | Genre/timbre classification, baseline | Exact audio identification from audio mic |
+
+Conclusion:
+Task 5 provides an essential, lightning-fast baseline recogniser that works well
+when reference songs have distinctly different frequency signatures (e.g. bass-heavy
+vs acoustic vs synth-dominant). However, its fundamental limitation—the loss of time
+information—demonstrates why Task 6 (peak-pair hashing with time offset voting) is
+the definitive solution for Shazam-like music identification.
+================================================================================
+
