@@ -1,7 +1,12 @@
 # ============================================================
 # GROUP 2 - TASK 4: FINGERPRINT REPRESENTATION
 # imported libraries include numpy and matplotlib
-# This code assumes that Task 3 has already run 
+# This code assumes that Task 3 has already run
+# This task is dedicated towards the fingerprint representation for each song. This is done so by taking extracted peaks from task 3 of GROUP1, 
+# recording their frequencies,their time separation.
+# This approach is further used by task 5 of GROUP2 to compare a query clip with the three songs provided as input in task 1 of GROUP1
+# However, NO song matching is done in this task yet.Song matching is done later in the task 6 of GROUP2 using the "generate_fingerprints" function 
+# defined below.
 # ============================================================
 import numpy as np
 import matplotlib.pyplot as plt
