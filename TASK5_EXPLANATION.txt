@@ -140,11 +140,27 @@ Comparison Table:
 | Computational Cost     | Minimal (single STFT + vector dot)    | Moderate (peak finding + hash indexing)   |
 | Best Use Case          | Genre/timbre classification, baseline | Exact audio identification from audio mic |
 
-Conclusion:
-Task 5 provides an essential, lightning-fast baseline recogniser that works well
-when reference songs have distinctly different frequency signatures (e.g. bass-heavy
-vs acoustic vs synth-dominant). However, its fundamental limitation—the loss of time
-information—demonstrates why Task 6 (peak-pair hashing with time offset voting) is
-the definitive solution for Shazam-like music identification.
+8. CRITICAL DSP INSIGHT: THE "SHARED dB NOISE FLOOR" BIAS & ITS FIX
+--------------------------------------------------------------------------------
+Why did unstandardized dB spectra show high matching (~0.95+) across ALL songs?
+- In a decibel spectrogram (amplitude_to_db with ref=max), values range from 0 dB
+  (peaks) down to -80 dB (silence/noise floor).
+- Across the 465 frequency bins up to 5000 Hz, almost every song has low energy
+  or silence in high-frequency bins (e.g. -60 dB to -80 dB).
+- When computing Cosine Similarity between two uncentered vectors of negative numbers,
+  the dot product is dominated by the huge constant DC offset:
+      (-50 dB) * (-50 dB) = +2500 per bin!
+- This shared negative baseline swamps out the actual musical peak differences,
+  causing completely different songs to exhibit an artificially high similarity of 0.95+.
+
+The Solution (Standardization / Z-scoring):
+- We mean-center and standardize each spectrum:
+      S_standardized(f) = (S_mean(f) - mean(S_mean)) / std(S_mean)
+- Now, the song's average floor is centered at 0.0:
+  * Resonant peak bins become positive (+1.0 to +4.0).
+  * Inactive/silent bins become negative (-0.5 to -1.0).
+- Result:
+  * True matching song: Cosine similarity >= +0.95.
+  * Different songs: Cosine similarity drops dramatically to 0.0 or negative!
 ================================================================================
 

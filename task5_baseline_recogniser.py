@@ -32,8 +32,10 @@ def extract_average_spectral_features(y, sr=TARGET_SRATE, sample_count=SAMPLE_CO
     db_spec_filtered = db_spec[:max_bin + 1, :]
     freq_axis = librosa.fft_frequencies(sr=sr, n_fft=sample_count)[:max_bin + 1]
     mean_spectrum = np.mean(db_spec_filtered, axis=1)
+    mean_spectrum = (mean_spectrum - np.mean(mean_spectrum)) / (np.std(mean_spectrum) + 1e-8)
     if include_std:
         std_spectrum = np.std(db_spec_filtered, axis=1)
+        std_spectrum = (std_spectrum - np.mean(std_spectrum)) / (np.std(std_spectrum) + 1e-8)
         feature_vector = np.concatenate([mean_spectrum, std_spectrum])
     else:
         feature_vector = mean_spectrum
