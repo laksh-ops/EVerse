@@ -1,8 +1,7 @@
 # ============================================================
 # GROUP 2 - TASK 4: FINGERPRINT REPRESENTATION
-#
-# This code assumes that Task 3 has already run and the 
-# 'peak_results' dictionary is available in your workspace.
+# imported libraries include numpy and matplotlib
+# This code assumes that Task 3 has already run 
 # ============================================================
 import numpy as np
 import matplotlib.pyplot as plt
