@@ -1,7 +1,6 @@
 import unittest
 import numpy as np
 
-# Replace 'fingerprint_generator' with the actual name of your Python file
 from fingerprint_generator import generate_fingerprints
 
 class TestGenerateFingerprints(unittest.TestCase):
