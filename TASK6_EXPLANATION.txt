@@ -1,0 +1,163 @@
+================================================================================
+SONIC SIGNATURES: FROM AUDIO SIGNALS TO SONG RECOGNITION
+GROUP 2 - TASK 6: PEAK-PAIR MATCHING (SHAZAM-STYLE RECOGNISER)
+COMPLETE EXPLANATION, MATHEMATICAL FORMULATION & ARCHITECTURE GUIDE
+================================================================================
+
+1. TASK OVERVIEW & CORE DELIVERABLES
+--------------------------------------------------------------------------------
+Detailed Task:
+Implement the Shazam-style audio recognition approach:
+1. Extract spectral peaks from the decibel spectrogram (Constellation Map).
+2. Pair spectral peaks within a forward target zone to form combinatorial hashes.
+3. Index the resulting hashes into an inverted index database.
+4. Match query hashes against the database and use matching time offsets to
+   identify the song.
+
+Expected Deliverable:
+A fingerprint-based recogniser that returns the predicted song and an
+offset-voting histogram.
+
+
+2. ARCHITECTURAL EVOLUTION (FROM TASK 5 TO TASK 6)
+--------------------------------------------------------------------------------
+Task 5 implemented a "Baseline Spectral Recogniser" by time-averaging decibel
+STFT slices. While simple and fast, it suffered from severe fundamental flaws:
+- Loss of Temporal Order: Time-averaging destroys all rhythmic, sequential,
+  and temporal note relationships. If audio frames were scrambled randomly,
+  the Task 5 average spectrum would remain identical!
+- Noise Vulnerability: Additive background noise (crowd chatter, street noise)
+  drifts the entire global spectral mean, causing baseline similarity to fail.
+- Poor Scalability: Searching a million songs with dense vector similarity
+  requires O(N) operations.
+
+Task 6 implements the landmark algorithm created by Avery Li-Chun Wang (2003):
+"An Industrial-Strength Audio Search Algorithm" (ISMIR 2003).
+
+Comparison:
++------------------------+---------------------------------+---------------------------------+
+| Criterion              | Task 5: Spectral Matching       | Task 6: Peak-Pair Hashing       |
++------------------------+---------------------------------+---------------------------------+
+| Representation         | 1D average spectral vector      | Sparse 2D peak pairs (hashes)   |
+| Temporal Structure     | Completely discarded            | Explicitly preserved (delta_t)  |
+| Time Alignment         | Approximate sliding window      | Exact mathematical time offset  |
+| False Alarm Rate       | High (timbral overlap)          | Extremely low (< 1 in a million)|
+| Noise Tolerance        | Low                             | High (prominent peaks survive)  |
+| Lookup Complexity      | O(N) scan over songs            | O(1) inverted hash index        |
++------------------------+---------------------------------+---------------------------------+
+
+
+3. DETAILED ALGORITHMIC PHASES
+--------------------------------------------------------------------------------
+
+PHASE 1: 2D SPECTRAL PEAK DETECTION (CONSTELLATION MAP)
+- We compute the STFT spectrogram with standardized settings:
+  sr = 22,050 Hz, n_fft = 2048, hop_length = 512.
+- The decibel spectrogram S(f, t) is filtered to retain prominent local energy
+  maxima in both time and frequency.
+- Implementation: We apply a 2D maximum filter (scipy.ndimage.maximum_filter):
+      local_max = maximum_filter(S, size=(2*freq_sep + 1, 2*time_sep + 1))
+      is_peak = (S == local_max) & (S >= amp_threshold_db)
+- This produces a sparse constellation map of coordinates (f_i, t_i, amp_i),
+  sorted chronologically by time frame t_i.
+- Why this matters: Spectral peaks correspond to musical notes, harmonics,
+  and formant resonances. They survive background noise, filtering, and room
+  reverberation.
+
+PHASE 2: COMBINATORIAL PEAK-PAIR HASHING
+- If we indexed individual peaks (single frequency f_1), common musical notes
+  (e.g., A4 = 440 Hz) would appear thousands of times across every song,
+  causing overwhelming hash collisions.
+- Shazam pairs an "anchor peak" (f_1, t_1) with target peaks (f_2, t_2) located
+  within a forward "target zone" in time and frequency:
+      t_1 + delta_t_min <= t_2 <= t_1 + delta_t_max   (e.g., 2 to 50 frames)
+      |f_2 - f_1| <= delta_f_max                      (e.g., 80 bins)
+- For each anchor peak, up to 'fan_out' (e.g., 7) target peaks are selected.
+- Each pair forms a compact fingerprint hash:
+      hash_key = (f_1, f_2, delta_t)
+  In binary 32-bit packing:
+      hash_key = (f_1 << 20) | (f_2 << 8) | delta_t
+- Notice: The hash contains delta_t = t_2 - t_1 (the relative time between the
+  two peaks), NOT the absolute time t_1!
+- The absolute anchor timestamp t_1 is stored separately alongside the song ID.
+
+PHASE 3: INVERTED INDEX DATABASE
+- The database is an inverted index (hash table / dictionary):
+      database[hash_key] -> list of (song_id, t_song_anchor)
+- Lookups are O(1) average time complexity.
+
+PHASE 4: TIME-OFFSET VOTING & HISTOGRAM MATCHING (THE SHAZAM PRINCIPLE)
+Given an unknown query clip Q:
+1. Extract query peaks and generate peak pairs:
+       (hash_key, t_query_anchor)
+2. For each query hash present in the database:
+   Retrieve all matching references:
+       (song_id, t_song_anchor)
+   Compute the time difference (time offset):
+       delta_tau = t_song_anchor - t_query_anchor
+   Cast a vote for candidate song_id at offset delta_tau:
+       votes[song_id][delta_tau] += 1
+
+
+4. MATHEMATICAL PROOF OF TIME-OFFSET INVARIANCE
+--------------------------------------------------------------------------------
+Suppose the query clip was recorded starting at timestamp T_true in Song S*.
+For any note or peak pair occurring at time t_query in the query clip, its
+corresponding time in the original master song is:
+    t_song = t_query + T_true
+
+Therefore, when the true hashes match:
+    delta_tau = t_song - t_query = (t_query + T_true) - t_query = T_true = CONSTANT!
+
+Result:
+- For the correct song S*, ALL legitimate peak-pair matches have the exact same
+  time offset delta_tau = T_true. Their votes accumulate coherently into a
+  single histogram bin, producing a towering, sharp delta peak!
+- For incorrect songs, the hash matches are purely accidental. Their time
+  offsets delta_tau are scattered uniformly across the song's duration,
+  forming a flat, low noise floor.
+
+Decision Rule:
+    Predicted Song = argmax_{song} ( max_{delta_tau} votes[song][delta_tau] )
+    Estimated Offset = argmax_{delta_tau} votes[Predicted Song][delta_tau]
+
+
+5. CONFIDENCE METRIC & ROBUSTNESS
+--------------------------------------------------------------------------------
+The strength of a match is evaluated through:
+1. Peak Vote Count: Number of coherent hashes supporting the alignment.
+2. Signal-to-Noise Ratio (SNR) in Histogram:
+       Confidence = Peak_Votes / max(median(background_votes), 1.0)
+   - A true match typically achieves 10x to 100x confidence over background noise.
+   - Non-matches have confidence ~1.0x (no distinct peak).
+3. Noise Invariance: Even when 70% of peaks are obscured or distorted by noise,
+   the remaining 30% still vote for the exact same T_true, ensuring 100% correct
+   song identification where Task 5 fails.
+
+
+6. FILE DELIVERABLES INCLUDED IN REPOSITORY
+--------------------------------------------------------------------------------
+1. task6_peak_pair_matching.py:
+   - Core production module implementing load_audio, comp_spectrogram,
+     find_spectral_peaks, generate_peak_pair_hashes, ShazamPeakPairRecogniser,
+     identify_query_clip_shazam, and plot_offset_voting_histogram.
+2. test_task6.py:
+   - Standalone automated test suite with full assertions, synthetic multi-tone
+     generators, noise robustness benchmarks, and automatic generation of the
+     deliverable histogram image.
+3. EVerse_Group2Task6.ipynb:
+   - Complete Jupyter / Colab notebook with interactive cells, constellation
+     map visualization, and offset-voting histogram figures.
+4. TASK6_EXPLANATION.txt:
+   - This document detailing mathematics, architecture, and step-by-step logic.
+
+
+7. HOW TO RUN AND TEST
+--------------------------------------------------------------------------------
+Running the standalone test suite:
+    python test_task6.py
+
+Running the Jupyter Notebook:
+    Open EVerse_Group2Task6.ipynb in VS Code, JupyterLab, or Google Colab and run all cells.
+================================================================================
+
